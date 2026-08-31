@@ -1,0 +1,14 @@
+# Volume persistente do banco (seção 18): garante que os dados sobrevivam
+# à recriação do Pod do PostgreSQL.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-pvc
+  labels:
+    app: database
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,12 @@
+# Binários compilados do back-end
+backend/api
+backend/bin/
+
+# Artefatos locais
+*.log
+.env
+.DS_Store
+
+# Editores
+.idea/
+.vscode/

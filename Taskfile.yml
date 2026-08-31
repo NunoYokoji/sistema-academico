@@ -1,0 +1,556 @@
+# Taskfile do Sistema Acadêmico — https://taskfile.dev
+#
+#   task              lista todas as tarefas
+#   task up           sobe tudo no Docker Compose
+#   task k8s:up       sobe tudo no Kubernetes (kind)
+#   task test         roda a bateria de testes do enunciado
+#   task stop         para tudo, sem apagar nada
+#   task clean        apaga tudo (containers, volume, cluster e imagens)
+
+version: '3'
+
+silent: true
+
+env:
+  # kind e kubectl foram instalados em ~/.local/bin (sem sudo). Deixar o PATH
+  # aqui dispensa o export manual a cada terminal novo.
+  PATH:
+    sh: echo "$HOME/.local/bin:$PATH"
+
+vars:
+  CLUSTER: sistema-academico
+  IMG_BACK: sistema-academico/backend:1.0
+  IMG_FRONT: sistema-academico/frontend:1.0
+  IMG_DB: postgres:16-alpine
+  IMG_REDIS: redis:7-alpine
+
+  APP: http://localhost:8080
+  # O /api responde igual no Compose e no Kubernetes — nos dois casos o nginx
+  # do front-end faz proxy para o back-end. Assim os testes servem aos dois.
+  API: http://localhost:8080/api
+
+  # redis-cli no ambiente que estiver no ar no momento.
+  REDIS:
+    sh: >-
+      if [ -n "$(docker ps -q -f name=sa-redis 2>/dev/null)" ];
+      then echo "docker compose exec -T redis redis-cli";
+      else echo "kubectl exec deployment/redis -- redis-cli"; fi
+
+tasks:
+
+  default:
+    desc: "Lista as tarefas disponíveis"
+    cmds:
+      - task --list
+
+# ─────────────────────────── Ferramentas ───────────────────────────
+
+  tools:
+    desc: "Instala kind e kubectl em ~/.local/bin (sem sudo), se faltarem"
+    cmds:
+      - mkdir -p "$HOME/.local/bin"
+      - |
+        if command -v kind >/dev/null; then
+          echo "✔ kind já instalado: $(kind --version)"
+        else
+          echo "▶ Baixando kind..."
+          curl -Lo "$HOME/.local/bin/kind" https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x "$HOME/.local/bin/kind"
+        fi
+      - |
+        if command -v kubectl >/dev/null; then
+          echo "✔ kubectl já instalado"
+        else
+          echo "▶ Baixando kubectl..."
+          curl -Lo "$HOME/.local/bin/kubectl" \
+            "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x "$HOME/.local/bin/kubectl"
+        fi
+      - echo ""
+      - echo "Para usar as ferramentas fora do task, acrescente ao ~/.bashrc:"
+      - echo '  export PATH="$HOME/.local/bin:$PATH"'
+
+  check:
+    desc: "Confere se as ferramentas necessárias estão disponíveis"
+    cmds:
+      - |
+        falta=0
+        for f in docker kind kubectl; do
+          if command -v $f >/dev/null; then
+            printf '  ✔ %-8s %s\n' "$f" "$(command -v $f)"
+          else
+            printf '  ✖ %-8s não encontrado\n' "$f"; falta=1
+          fi
+        done
+        if docker info >/dev/null 2>&1; then
+          echo "  ✔ daemon do Docker respondendo"
+        else
+          echo "  ✖ o daemon do Docker não está respondendo"; falta=1
+        fi
+        [ $falta -eq 0 ] || { echo ""; echo "Instale o que falta com: task tools"; exit 1; }
+
+# ─────────────────────────── Imagens ───────────────────────────
+
+  build:
+    desc: "Constrói as imagens Docker do back-end e do front-end"
+    cmds:
+      - echo "▶ Construindo {{.IMG_BACK}}"
+      - docker build -t {{.IMG_BACK}} ./backend
+      - echo "▶ Construindo {{.IMG_FRONT}}"
+      - docker build -t {{.IMG_FRONT}} ./frontend
+      - echo ""
+      - docker images --filter reference='sistema-academico/*'
+
+# ─────────────────────────── Docker Compose ───────────────────────────
+
+  up:
+    desc: "Sobe tudo no Docker Compose → http://localhost:8080"
+    deps: [liberar-porta]
+    cmds:
+      - echo "▶ Subindo os 4 containers (front-end, back-end, Redis e banco)"
+      - docker compose up -d --build --remove-orphans
+      - task: aguardar-app
+      - echo ""
+      - 'echo "  Aplicação : {{.APP}}"'
+      - 'echo "  API direta: http://localhost:8081/api/alunos"'
+
+  down:
+    desc: "Encerra os containers do Compose (mantém os dados do banco)"
+    cmds:
+      - docker compose down
+      - echo "✔ Compose encerrado. O volume do Postgres foi preservado."
+
+  logs:
+    desc: "Acompanha os logs do back-end (Ctrl+C para sair)"
+    cmds:
+      - docker compose logs -f backend
+
+  ps:
+    desc: "Mostra o estado dos containers"
+    cmds:
+      - docker compose ps
+
+  liberar-porta:
+    internal: true
+    cmds:
+      - |
+        if [ -n "$(docker ps -q -f name={{.CLUSTER}}-control-plane)" ]; then
+          echo "⚠ O cluster kind está ocupando a porta 8080; parando o nó."
+          echo "  (reversível — 'task k8s:up' religa o cluster com os dados intactos)"
+          docker stop {{.CLUSTER}}-control-plane >/dev/null
+        fi
+
+  aguardar-app:
+    internal: true
+    cmds:
+      - |
+        for i in $(seq 1 40); do
+          if curl -sf -o /dev/null {{.APP}}/; then
+            echo "✔ Aplicação respondendo em {{.APP}}"
+            exit 0
+          fi
+          # Um conflito de porta pode deixar o container do front-end sem
+          # rede; nesse caso ele sobe, não resolve o host "backend" e morre.
+          if [ -z "$(docker ps -q -f name={{.CLUSTER}}-control-plane)" ] \
+             && [ -z "$(docker ps -q -f name=sa-frontend)" ] \
+             && [ -n "$(docker ps -aq -f name=sa-frontend)" ]; then
+            echo "… front-end parado; recriando o container"
+            docker compose up -d --force-recreate frontend >/dev/null 2>&1
+          fi
+          sleep 2
+        done
+        echo "✖ A aplicação não respondeu a tempo. Investigue com: task logs"
+        exit 1
+
+# ─────────────────────────── Kubernetes ───────────────────────────
+
+  k8s:up:
+    desc: "Sobe tudo no Kubernetes: cria o cluster, carrega as imagens e faz o deploy"
+    deps: [check]
+    cmds:
+      - task: build
+      - |
+        if [ -n "$(docker ps -q -f name=sa-frontend)" ]; then
+          echo "▶ Encerrando o Compose (os dois disputam a porta 8080)"
+          docker compose down
+        fi
+      - |
+        if ! kind get clusters 2>/dev/null | grep -qx "{{.CLUSTER}}"; then
+          echo "▶ Criando o cluster kind"
+          kind create cluster --config kind-config.yaml
+        elif [ -z "$(docker ps -q -f name={{.CLUSTER}}-control-plane)" ]; then
+          echo "▶ Religando o nó do cluster (dados preservados no PVC)"
+          docker start {{.CLUSTER}}-control-plane >/dev/null
+          for i in $(seq 1 30); do kubectl get nodes >/dev/null 2>&1 && break; sleep 2; done
+        else
+          echo "✔ Cluster kind já está no ar"
+        fi
+      - |
+        # As imagens oficiais também vão para dentro do cluster: sem isso o
+        # kubelet do kind tenta baixá-las do Docker Hub a cada cluster novo,
+        # o que é lento e falha se a rede estiver bloqueada.
+        for img in {{.IMG_DB}} {{.IMG_REDIS}}; do
+          if [ -z "$(docker images -q $img)" ]; then
+            echo "▶ Baixando $img para a máquina"
+            docker pull $img
+          fi
+        done
+      - |
+        # Carrega as quatro imagens via arquivo, exportando explicitamente a
+        # plataforma. O Docker moderno usa o image store do containerd, que
+        # guarda a lista multi-plataforma completa; o "kind load docker-image"
+        # importa com --all-platforms e falha, porque só a variante amd64 foi
+        # baixada. Exportar uma plataforma só resolve.
+        echo "▶ Carregando as imagens no cluster"
+        TMP=$(mktemp -d)
+        trap 'rm -rf "$TMP"' EXIT
+        for img in {{.IMG_BACK}} {{.IMG_FRONT}} {{.IMG_DB}} {{.IMG_REDIS}}; do
+          printf '   %-32s ' "$img"
+          arq="$TMP/$(echo "$img" | tr '/:' '__').tar"
+          if docker save --platform linux/amd64 "$img" -o "$arq" 2>/dev/null; then
+            kind load image-archive "$arq" --name {{.CLUSTER}} >/dev/null
+          else
+            # Docker antigo, sem --platform: tenta o caminho direto.
+            kind load docker-image "$img" --name {{.CLUSTER}} >/dev/null
+          fi
+          echo "ok"
+        done
+      - echo "▶ Aplicando os manifests"
+      - kubectl apply -f kubernetes/
+      - |
+        # As imagens mantêm sempre a mesma tag, então o Deployment não
+        # reinicia sozinho quando o código muda: o restart força os Pods a
+        # pegarem a imagem recém-carregada.
+        for d in backend frontend; do kubectl rollout restart deployment/$d >/dev/null; done
+        # Pods travados por falha de download não se recuperam a tempo
+        # sozinhos; recriá-los faz o kubelet reavaliar as imagens já no nó.
+        kubectl delete pod --field-selector=status.phase!=Running --ignore-not-found >/dev/null 2>&1 || true
+      - for d in database redis backend frontend; do kubectl rollout status deployment/$d --timeout=180s; done
+      - task: aguardar-app
+      - echo ""
+      - kubectl get pods
+
+  k8s:status:
+    desc: "Mostra Pods, Deployments, Services e PVC do cluster"
+    deps: [k8s-ativo]
+    cmds:
+      - echo "── PODS ──"
+      - kubectl get pods -o wide
+      - echo ""
+      - echo "── DEPLOYMENTS ──"
+      - kubectl get deployments
+      - echo ""
+      - echo "── SERVICES ──"
+      - kubectl get services
+      - echo ""
+      - echo "── PVC ──"
+      - kubectl get pvc
+
+  k8s:logs:
+    desc: "Acompanha os logs das réplicas do back-end no cluster"
+    deps: [k8s-ativo]
+    cmds:
+      - kubectl logs -l app=backend --tail=50 -f
+
+  k8s:down:
+    desc: "Remove os recursos do cluster, mas mantém o cluster de pé"
+    deps: [k8s-ativo]
+    cmds:
+      - kubectl delete -f kubernetes/
+      - echo "✔ Recursos removidos. O cluster continua ativo."
+
+  k8s:delete:
+    desc: "Apaga o cluster kind por completo (perde os dados do PVC)"
+    prompt: "Isto apaga o cluster kind e os dados do banco nele. Continuar?"
+    cmds:
+      - kind delete cluster --name {{.CLUSTER}}
+      - echo "✔ Cluster removido."
+
+  k8s-ativo:
+    internal: true
+    preconditions:
+      - sh: kubectl get nodes >/dev/null 2>&1
+        msg: "Nenhum cluster Kubernetes ativo. Suba com: task k8s:up"
+
+# ─────────────────────────── Parar / limpar ───────────────────────────
+
+  stop:
+    desc: "Para tudo sem apagar nada (containers e nó do cluster)"
+    cmds:
+      - |
+        if [ -n "$(docker ps -aq -f name=sa-)" ]; then
+          docker compose down
+          echo "✔ Compose encerrado"
+        fi
+      - |
+        if [ -n "$(docker ps -q -f name={{.CLUSTER}}-control-plane)" ]; then
+          docker stop {{.CLUSTER}}-control-plane >/dev/null
+          echo "✔ Nó do cluster parado (dados preservados; religue com task k8s:up)"
+        fi
+      - echo ""
+      - 'echo "Nada foi apagado. Para apagar de fato: task clean"'
+
+  clean:
+    desc: "APAGA tudo: containers, volume do banco, cluster kind e imagens"
+    prompt: "Isto apaga o volume do Postgres, o cluster kind e as imagens locais. Continuar?"
+    cmds:
+      - docker compose down -v --remove-orphans || true
+      - kind delete cluster --name {{.CLUSTER}} 2>/dev/null || true
+      - docker rmi {{.IMG_BACK}} {{.IMG_FRONT}} 2>/dev/null || true
+      - echo "✔ Ambiente apagado. Recomece com 'task up' ou 'task k8s:up'."
+
+# ────────────────────── Testes do enunciado (seção 22) ──────────────────────
+
+  test:
+    desc: "Roda os testes que não dependem do Kubernetes (API, validação, Redis, Docker)"
+    cmds:
+      - task: test:api
+      - task: test:validacao
+      - task: test:redis
+      - task: test:docker
+
+  test:all:
+    desc: "Roda a bateria completa, incluindo os testes de Kubernetes"
+    cmds:
+      - task: test:api
+      - task: test:validacao
+      - task: test:redis
+      - task: test:docker
+      - task: test:k8s
+      - task: test:scale
+      - task: test:persistencia
+
+  test:api:
+    desc: "API REST: CRUD de alunos e notas, com os códigos HTTP de cada operação"
+    cmds:
+      - |
+        echo "══ API REST — CRUD completo ══"
+        RA="9$(date +%H%M%S)"
+
+        echo "→ GET /api/alunos"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 200)\n' {{.API}}/alunos
+
+        echo "→ POST /api/alunos  (cadastro)"
+        ALUNO=$(curl -s -w '\n%{http_code}' -X POST {{.API}}/alunos \
+          -H 'Content-Type: application/json' \
+          -d "{\"ra\":\"$RA\",\"nome\":\"Aluno de Teste\",\"email\":\"teste@email.com\",\"curso\":\"Análise e Desenvolvimento de Sistemas\",\"semestre\":4}")
+        echo "   HTTP $(echo "$ALUNO" | tail -1) (esperado 201)"
+        ID=$(echo "$ALUNO" | head -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+        echo "   id=$ID  ra=$RA"
+
+        echo "→ POST /api/alunos  (mesmo RA — não pode duplicar)"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 409)\n' -X POST {{.API}}/alunos \
+          -H 'Content-Type: application/json' \
+          -d "{\"ra\":\"$RA\",\"nome\":\"Outro Aluno\",\"email\":\"outro@email.com\",\"curso\":\"ADS\",\"semestre\":4}"
+
+        echo "→ GET /api/alunos/$ID"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 200)\n' {{.API}}/alunos/$ID
+
+        echo "→ POST /api/alunos/$ID/notas  (P1=5,0  P2=4,0)"
+        NOTA=$(curl -s -w '\n%{http_code}' -X POST {{.API}}/alunos/$ID/notas \
+          -H 'Content-Type: application/json' -d '{"p1":5.0,"p2":4.0}')
+        echo "   HTTP $(echo "$NOTA" | tail -1) (esperado 201)"
+        echo "   $(echo "$NOTA" | head -1)"
+        NID=$(echo "$NOTA" | head -1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+
+        echo "→ PUT /api/notas/$NID  (P1=8,0  P2=7,0 — média e situação recalculadas)"
+        curl -s -X PUT {{.API}}/notas/$NID -H 'Content-Type: application/json' \
+          -d '{"p1":8.0,"p2":7.0}' | sed 's/^/   /'
+        echo ""
+
+        echo "→ PUT /api/alunos/$ID  (alteração do cadastro)"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 200)\n' -X PUT {{.API}}/alunos/$ID \
+          -H 'Content-Type: application/json' \
+          -d "{\"ra\":\"$RA\",\"nome\":\"Aluno Renomeado\",\"email\":\"teste@email.com\",\"curso\":\"ADS\",\"semestre\":5}"
+
+        echo "→ GET /api/alunos/9999  (inexistente)"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 404)\n' {{.API}}/alunos/9999
+
+        echo "→ Limpando: DELETE da nota e do aluno de teste"
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 204)\n' -X DELETE {{.API}}/notas/$NID
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 204)\n' -X DELETE {{.API}}/alunos/$ID
+        curl -s -o /dev/null -w '   HTTP %{http_code} (esperado 404 — já excluído)\n' -X DELETE {{.API}}/alunos/$ID
+        echo ""
+
+  test:validacao:
+    desc: "Validação no back-end: campos obrigatórios, formato, faixas e tipos"
+    cmds:
+      - |
+        echo "══ Validação no back-end ══"
+        echo "A validação do front-end não é suficiente: a API revalida tudo."
+        echo ""
+        echo "→ Aluno com todos os campos inválidos:"
+        curl -s -X POST {{.API}}/alunos -H 'Content-Type: application/json' \
+          -d '{"ra":"12","nome":"X","email":"invalido","curso":"","semestre":99}' \
+          | python3 -m json.tool --no-ensure-ascii | sed 's/^/   /'
+        echo ""
+        echo "→ Nota fora da faixa 0–10:"
+        curl -s -X POST {{.API}}/alunos/1/notas -H 'Content-Type: application/json' \
+          -d '{"p1":11,"p2":5}' | python3 -m json.tool --no-ensure-ascii | sed 's/^/   /'
+        echo ""
+        echo "→ Campo com tipo errado (semestre como texto):"
+        curl -s -X POST {{.API}}/alunos -H 'Content-Type: application/json' \
+          -d '{"ra":"123456","nome":"Teste","email":"a@b.com","curso":"ADS","semestre":"quatro"}' \
+          | python3 -m json.tool --no-ensure-ascii | sed 's/^/   /'
+        echo ""
+
+  test:redis:
+    desc: "Redis: cache MISS, cache HIT, TTL e invalidação após alteração"
+    cmds:
+      - |
+        echo "══ Redis — cache, TTL e invalidação ══"
+
+        echo "→ Limpando o cache para começar do zero"
+        {{.REDIS}} FLUSHALL >/dev/null
+
+        echo "→ 1ª consulta a GET /api/alunos (vai ao banco):"
+        curl -sI {{.API}}/alunos | grep -i '^x-cache' | sed 's/^/   /'
+
+        echo "→ 2ª consulta (vem do cache):"
+        curl -sI {{.API}}/alunos | grep -i '^x-cache' | sed 's/^/   /'
+
+        echo "→ Chaves gravadas no Redis:"
+        {{.REDIS}} KEYS '*' | sed 's/^/   /'
+
+        echo "→ TTL da chave alunos:all, em segundos:"
+        {{.REDIS}} TTL alunos:all | sed 's/^/   /'
+
+        # Regrava um aluno existente com os próprios valores: dispara a
+        # invalidação sem alterar dado algum, e sem depender de um id fixo.
+        DADOS=$(curl -s {{.API}}/alunos | python3 -c 'import json,sys; L=json.load(sys.stdin); a=L[0] if L else None; print(a["id"] if a else ""); print(json.dumps({k:a[k] for k in ("ra","nome","email","curso","semestre")}) if a else "")')
+        ID=$(echo "$DADOS" | head -1)
+        if [ -z "$ID" ]; then
+          echo "→ Não há alunos cadastrados; pulando a demonstração de invalidação."
+        else
+          echo "→ Regravando o aluno $ID (PUT /api/alunos/$ID) para invalidar o cache:"
+          curl -s -o /dev/null -w '   HTTP %{http_code}\n' -X PUT {{.API}}/alunos/$ID \
+            -H 'Content-Type: application/json' -d "$(echo "$DADOS" | tail -1)"
+        fi
+
+        echo "→ Chaves após a alteração (vazio = cache invalidado):"
+        {{.REDIS}} KEYS '*' | sed 's/^/   /'
+
+        echo "→ A consulta seguinte volta a buscar no banco:"
+        curl -sI {{.API}}/alunos | grep -i '^x-cache' | sed 's/^/   /'
+        echo ""
+
+  test:docker:
+    desc: "Docker: containers em execução e imagens utilizadas"
+    cmds:
+      - echo "══ Docker — containers e imagens ══"
+      - echo ""
+      - echo "── Containers ──"
+      - |
+        if [ -n "$(docker ps -q -f name=sa-)" ]; then
+          docker compose ps
+        else
+          echo "   (o ambiente está no Kubernetes — veja 'task test:k8s')"
+        fi
+      - echo ""
+      - echo "── Imagens construídas pelo projeto ──"
+      - docker images --filter reference='sistema-academico/*'
+      - echo ""
+      - echo "── Imagens oficiais utilizadas ──"
+      - docker images --filter reference='postgres' --filter reference='redis' --filter reference='nginx'
+      - echo ""
+
+  test:k8s:
+    desc: "Kubernetes: Pods, Deployments, Services, ConfigMap, Secret e PVC"
+    deps: [k8s-ativo]
+    cmds:
+      - echo "══ Kubernetes — recursos implantados ══"
+      - echo ""
+      - echo "── kubectl get pods ──"
+      - kubectl get pods -o wide
+      - echo ""
+      - echo "── kubectl get deployments ──"
+      - kubectl get deployments
+      - echo ""
+      - echo "── kubectl get services ──"
+      - kubectl get services
+      - echo ""
+      - echo "── ConfigMap, Secret e PVC ──"
+      - kubectl get configmap/sistema-academico-config secret/sistema-academico-secret pvc/database-pvc
+      - echo ""
+      - echo "── Endpoints do backend-service (uma entrada por réplica) ──"
+      - kubectl get endpointslice -l kubernetes.io/service-name=backend-service
+      - echo ""
+
+  test:scale:
+    desc: "Escalabilidade: escala o back-end para 3 réplicas e volta para 2"
+    deps: [k8s-ativo]
+    cmds:
+      - |
+        echo "══ Escalabilidade do back-end ══"
+        echo "→ Estado inicial:"
+        kubectl get deployment backend | sed 's/^/   /'
+
+        echo "→ kubectl scale deployment backend --replicas=3"
+        kubectl scale deployment backend --replicas=3 >/dev/null
+        kubectl rollout status deployment/backend --timeout=120s | sed 's/^/   /'
+
+        echo "→ Três Pods em execução:"
+        kubectl get pods -l app=backend | sed 's/^/   /'
+
+        echo "→ A aplicação segue respondendo:"
+        printf '   '
+        for i in 1 2 3 4 5 6; do curl -s -o /dev/null -w '%{http_code} ' {{.API}}/alunos; done
+        echo ""
+
+        echo "→ Voltando para 2 réplicas:"
+        kubectl scale deployment backend --replicas=2 >/dev/null
+        kubectl rollout status deployment/backend --timeout=120s | sed 's/^/   /'
+        echo ""
+
+  test:persistencia:
+    desc: "Persistência: os dados sobrevivem à recriação do Pod do banco (PVC)"
+    deps: [k8s-ativo]
+    cmds:
+      - |
+        echo "══ Persistência do banco (PersistentVolumeClaim) ══"
+        RA="7$(date +%H%M%S)"
+
+        echo "→ Cadastrando um aluno (RA $RA)"
+        ID=$(curl -s -X POST {{.API}}/alunos -H 'Content-Type: application/json' \
+          -d "{\"ra\":\"$RA\",\"nome\":\"Aluno Persistente\",\"email\":\"p@email.com\",\"curso\":\"ADS\",\"semestre\":1}" \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+        echo "   id=$ID"
+
+        echo "→ Pod do banco antes:  $(kubectl get pod -l app=database -o jsonpath='{.items[0].metadata.name}')"
+        echo "→ Destruindo o Pod do banco"
+        kubectl delete pod -l app=database --wait=true >/dev/null
+        kubectl rollout status deployment/database --timeout=180s | sed 's/^/   /'
+        echo "→ Pod do banco depois: $(kubectl get pod -l app=database -o jsonpath='{.items[0].metadata.name}')"
+
+        echo "→ Aguardando o back-end reconectar"
+        for i in $(seq 1 30); do curl -sf -o /dev/null {{.API}}/alunos && break; sleep 2; done
+
+        echo "→ O registro sobreviveu?"
+        if curl -s {{.API}}/alunos | grep -q "\"ra\":\"$RA\""; then
+          echo "   ✔ SIM — o dado continua no banco após a recriação do Pod"
+        else
+          echo "   ✖ NÃO — a persistência falhou"
+        fi
+
+        echo "→ Removendo o registro de teste"
+        curl -s -o /dev/null -X DELETE {{.API}}/alunos/$ID
+        echo ""
+
+  test:responsivo:
+    desc: "Responsividade: abre o navegador e lista as resoluções a verificar"
+    cmds:
+      - |
+        echo "══ Responsividade ══"
+        echo ""
+        echo "Abra o DevTools (F12) → modo dispositivo (Ctrl+Shift+M) e verifique:"
+        echo ""
+        printf '   %-12s %-14s %s\n' DISPOSITIVO RESOLUÇÃO "O QUE ESPERAR"
+        printf '   %-12s %-14s %s\n' Smartphone "375 x 667"   "menu hamburguer; tabela em cartoes"
+        printf '   %-12s %-14s %s\n' Smartphone "414 x 896"   "idem"
+        printf '   %-12s %-14s %s\n' Tablet     "768 x 1024"  "cartoes; formulario em 2 colunas"
+        printf '   %-12s %-14s %s\n' Desktop    "1920 x 1080" "menu horizontal; tabela completa"
+        echo ""
+        echo "Em todas: sem rolagem horizontal, sem texto cortado,"
+        echo "botoes acessiveis e nenhum elemento sobreposto."
+        echo ""
+        command -v xdg-open >/dev/null && xdg-open {{.APP}} >/dev/null 2>&1 || echo "Abra {{.APP}} no navegador."

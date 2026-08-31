@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sistema Acadêmico de Cadastro de Notas</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-content">
+      <div class="brand">
+        <span class="brand-name" id="instituicao">Instituto Tecnológico Horizonte</span>
+      </div>
+
+      <button class="menu-toggle" id="menuToggle" aria-label="Abrir menu" aria-expanded="false" aria-controls="mainNav">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      <nav class="main-nav" id="mainNav">
+        <a href="#dados-disciplina" class="nav-link">Disciplina</a>
+        <a href="#cadastro-alunos" class="nav-link">Alunos</a>
+        <a href="#cadastro-notas" class="nav-link">Notas</a>
+        <a href="#lista-alunos" class="nav-link">Lista</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section id="dados-disciplina" class="card disciplina-info">
+      <h1>Painel da Disciplina</h1>
+      <div class="info-grid">
+        <div class="info-item">
+          <span class="info-label">Disciplina</span>
+          <span class="info-value" id="disciplina">Programação Multiplataforma</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Professor responsável</span>
+          <span class="info-value" id="professor">Prof. Ana Carvalho</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Semestre</span>
+          <span class="info-value" id="semestre">2026/2</span>
+        </div>
+        <div class="info-item">
+          <span class="info-label">Alunos matriculados</span>
+          <span class="info-value" id="totalAlunos">—</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="cadastro-alunos" class="card">
+      <h2 id="tituloFormAluno">Cadastro de Alunos</h2>
+
+      <form id="alunoForm" novalidate>
+        <input type="hidden" id="alunoId" />
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="alunoRa">RA / Matrícula</label>
+            <input type="text" id="alunoRa" name="ra" inputmode="numeric" maxlength="8"
+                   autocomplete="off" placeholder="Ex.: 123456" required />
+            <span class="error-message" data-erro="ra"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="alunoNome">Nome do aluno</label>
+            <input type="text" id="alunoNome" name="nome" maxlength="120"
+                   autocomplete="off" placeholder="Ex.: João da Silva" required />
+            <span class="error-message" data-erro="nome"></span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="alunoEmail">E-mail</label>
+            <input type="email" id="alunoEmail" name="email" maxlength="160"
+                   autocomplete="off" placeholder="Ex.: joao@email.com" required />
+            <span class="error-message" data-erro="email"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="alunoCurso">Curso</label>
+            <input type="text" id="alunoCurso" name="curso" maxlength="120" list="cursos"
+                   autocomplete="off" placeholder="Ex.: Análise e Desenvolvimento de Sistemas" required />
+            <datalist id="cursos">
+              <option value="Análise e Desenvolvimento de Sistemas"></option>
+              <option value="Desenvolvimento de Software Multiplataforma"></option>
+              <option value="Gestão da Tecnologia da Informação"></option>
+            </datalist>
+            <span class="error-message" data-erro="curso"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="alunoSemestre">Semestre</label>
+            <input type="number" id="alunoSemestre" name="semestre" min="1" max="10" step="1"
+                   placeholder="1 a 10" required />
+            <span class="error-message" data-erro="semestre"></span>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="btnSalvarAluno">Cadastrar aluno</button>
+          <button type="button" class="btn btn-secondary" id="btnCancelarAluno" hidden>Cancelar edição</button>
+        </div>
+
+        <p class="form-feedback" id="feedbackAluno" role="status"></p>
+      </form>
+    </section>
+
+    <section id="cadastro-notas" class="card">
+      <h2>Cadastro de Notas</h2>
+
+      <form id="notasForm" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="alunoSelect">Aluno</label>
+            <select id="alunoSelect" name="aluno" required>
+              <option value="" disabled selected>Selecione um aluno</option>
+            </select>
+            <span class="error-message" data-erro="aluno"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="raNota">RA / Matrícula</label>
+            <input type="text" id="raNota" name="ra" readonly tabindex="-1"
+                   placeholder="Preenchido pela seleção" />
+            <span class="error-message"></span>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="notaP1">Nota da P1</label>
+            <input type="number" id="notaP1" name="p1" min="0" max="10" step="0.1"
+                   placeholder="0,0 a 10,0" required />
+            <span class="error-message" data-erro="p1"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="notaP2">Nota da P2</label>
+            <input type="number" id="notaP2" name="p2" min="0" max="10" step="0.1"
+                   placeholder="0,0 a 10,0" required />
+            <span class="error-message" data-erro="p2"></span>
+          </div>
+        </div>
+
+        <p class="previa" id="previaNota" hidden>
+          Média prévia: <strong id="previaMedia">—</strong>
+          <span class="situacao" id="previaSituacao">—</span>
+        </p>
+
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Salvar notas</button>
+          <button type="button" class="btn btn-secondary" id="btnLimparNotas">Limpar</button>
+          <button type="button" class="btn btn-perigo" id="btnExcluirNotas" hidden>Excluir notas</button>
+        </div>
+
+        <p class="form-feedback" id="feedbackNota" role="status"></p>
+      </form>
+    </section>
+
+    <section id="lista-alunos" class="card">
+      <h2>Lista de Alunos</h2>
+
+      <p class="form-feedback" id="feedbackLista" role="status"></p>
+
+      <div class="table-wrapper">
+        <table class="alunos-table" id="alunosTable">
+          <thead>
+            <tr>
+              <th>RA</th>
+              <th>Aluno</th>
+              <th>E-mail</th>
+              <th>Curso</th>
+              <th>Sem.</th>
+              <th>P1</th>
+              <th>P2</th>
+              <th>Média</th>
+              <th>Situação</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="alunosTableBody">
+          </tbody>
+        </table>
+      </div>
+
+      <p class="estado-lista" id="estadoLista">Carregando alunos…</p>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>&copy; 2026 Instituto Tecnológico Horizonte — Sistema Acadêmico de Cadastro de Notas</p>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

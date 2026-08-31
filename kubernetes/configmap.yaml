@@ -1,0 +1,18 @@
+# Configurações não sensíveis da aplicação (seção 17).
+# Os endereços são nomes de Services do Kubernetes — nunca localhost.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sistema-academico-config
+  labels:
+    app.kubernetes.io/part-of: sistema-academico
+data:
+  DB_HOST: database-service
+  DB_PORT: "5432"
+  DB_NAME: sistema_academico
+  DB_USER: postgres
+  REDIS_HOST: redis-service
+  REDIS_PORT: "6379"
+  CACHE_TTL_SECONDS: "60"
+  GIN_MODE: release
+  BACKEND_URL: http://backend-service:8080

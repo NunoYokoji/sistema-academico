@@ -14,6 +14,7 @@
   --vermelho: #b32424;
   --vermelho-fundo: #fbe6e6;
   --raio: 10px;
+  --cinza-fundo: #eef1f5;
   --sombra: 0 2px 8px rgba(18, 58, 99, 0.08);
 }
 
@@ -27,6 +28,13 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Regras de componente com display explícito sobrescreveriam o atributo
+   hidden; esta linha garante que o JavaScript consiga esconder qualquer
+   elemento com el.hidden = true. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background-color: var(--fundo);
@@ -35,7 +43,6 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
 }
 
 /* ---------- Cabeçalho e menu ---------- */
@@ -304,6 +311,9 @@ select.invalido {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.95rem;
+  /* Com 10 colunas, abaixo disto o texto começa a quebrar feio: o wrapper
+     rola horizontalmente por conta própria, sem arrastar a página junto. */
+  min-width: 900px;
 }
 
 .alunos-table th,
@@ -356,7 +366,7 @@ select.invalido {
 
 .situacao-pendente {
   color: var(--cinza-texto);
-  background-color: #eef1f5;
+  background-color: var(--cinza-fundo);
 }
 
 .linha-destaque {
@@ -366,6 +376,79 @@ select.invalido {
 @keyframes destacar {
   0% { background-color: #fff3c4; }
   100% { background-color: transparent; }
+}
+
+/* ---------- Prévia da média no formulário de notas ---------- */
+.previa {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.85rem;
+  background-color: var(--azul-claro);
+  border-radius: 8px;
+  font-size: 0.95rem;
+}
+
+/* ---------- Botões de ação da tabela ---------- */
+.btn-perigo {
+  background-color: var(--branco);
+  color: var(--vermelho);
+  border-color: var(--vermelho);
+}
+
+.btn-perigo:hover,
+.btn-perigo:focus-visible {
+  background-color: var(--vermelho-fundo);
+}
+
+.coluna-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.btn-acao {
+  padding: 0.4rem 0.75rem;
+  min-height: 36px;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--azul-escuro);
+  background-color: var(--branco);
+  border: 1px solid var(--azul);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.btn-acao:hover,
+.btn-acao:focus-visible {
+  background-color: var(--azul-claro);
+}
+
+.btn-acao-perigo {
+  color: var(--vermelho);
+  border-color: var(--vermelho);
+}
+
+.btn-acao-perigo:hover,
+.btn-acao-perigo:focus-visible {
+  background-color: var(--vermelho-fundo);
+}
+
+/* ---------- Estado vazio / carregando da lista ---------- */
+.estado-lista {
+  padding: 1.25rem 0.5rem;
+  color: var(--cinza-texto);
+  text-align: center;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: progress;
 }
 
 /* ---------- Rodapé ---------- */
@@ -416,6 +499,10 @@ select.invalido {
     overflow-x: visible;
   }
 
+  .alunos-table {
+    min-width: 0;
+  }
+
   .alunos-table,
   .alunos-table tbody,
   .alunos-table tr,
@@ -459,6 +546,21 @@ select.invalido {
 
   .alunos-table td:last-child {
     border-bottom: none;
+  }
+
+  /* No cartão, os botões ocupam a linha inteira e ficam fáceis de tocar. */
+  .alunos-table td.coluna-acoes {
+    justify-content: stretch;
+    padding-top: 0.75rem;
+  }
+
+  .alunos-table .btn-acao {
+    flex: 1 1 auto;
+    min-height: 42px;
+  }
+
+  .alunos-table td.coluna-acoes::before {
+    flex-basis: 100%;
   }
 
   .alunos-table td::before {

@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+  labels:
+    app: frontend
+spec:
+  # NodePort é o único componente exposto para fora do cluster. A porta
+  # 30080 é mapeada para localhost:8080 pelo kind-config.yaml.
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      nodePort: 30080

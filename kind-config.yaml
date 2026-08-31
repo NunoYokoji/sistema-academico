@@ -1,0 +1,11 @@
+# Cluster kind de nó único. O extraPortMappings publica o NodePort 30080 do
+# frontend na porta 8080 da máquina, dispensando port-forward.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: sistema-academico
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 8080
+        protocol: TCP

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database
+  labels:
+    app: database
+spec:
+  replicas: 1
+  # O Pod precisa ser encerrado antes que o novo monte o mesmo volume
+  # ReadWriteOnce; por isso a estratégia é Recreate, e não RollingUpdate.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: database
+  template:
+    metadata:
+      labels:
+        app: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          # A imagem é carregada no cluster com "kind load docker-image",
+          # dispensando o download a partir do registro.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            # O Postgres usa nomes próprios de variável: os valores vêm do
+            # mesmo ConfigMap/Secret consumido pelo back-end.
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: sistema-academico-config
+                  key: DB_NAME
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: sistema-academico-config
+                  key: DB_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: sistema-academico-secret
+                  key: DB_PASSWORD
+            # Os dados ficam em um subdiretório do volume: o initdb exige
+            # um diretório vazio, e o ponto de montagem não é.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: dados
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres", "-d", "sistema_academico"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: dados
+          persistentVolumeClaim:
+            claimName: database-pvc

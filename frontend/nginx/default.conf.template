@@ -1,0 +1,33 @@
+# O entrypoint da imagem oficial do nginx aplica envsubst neste template,
+# substituindo ${BACKEND_URL}. Assim a mesma imagem serve tanto o
+# docker-compose (backend:8080) quanto o Kubernetes (backend-service:8080).
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json;
+
+    # O front consome a API por caminhos relativos (/api/...). Como o proxy
+    # é feito aqui, não existe CORS nem URL de back-end fixada no JavaScript.
+    location /api/ {
+        proxy_pass         ${BACKEND_URL};
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+
+    location = /healthz {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
